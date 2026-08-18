@@ -45,44 +45,125 @@ class ChurnModelService:
             "Churn",
         ]
 
+        # Normalize CSV header names.
+        df = df.copy()
+        df.columns = [
+            str(column).replace("\ufeff", "").strip()
+            for column in df.columns
+        ]
+
         missing = [column for column in required_columns if column not in df.columns]
         if missing:
-            raise ValueError(f"Dataset is missing required columns: {missing}")
+            raise ValueError(
+                "Dataset is missing required columns: "
+                f"{missing}. Found columns: {list(df.columns)}"
+            )
 
-        model_df = df.copy()
+        model_df = df[required_columns].copy()
 
-        object_columns = model_df.select_dtypes(
+        # Strip whitespace from text fields.
+        text_columns = model_df.select_dtypes(
             include=["object", "string"]
         ).columns
 
-        for column in object_columns:
-            model_df[column] = model_df[column].replace(
-                r"^\s*$",
-                np.nan,
-                regex=True,
+        for column in text_columns:
+            model_df[column] = (
+                model_df[column]
+                .astype("string")
+                .str.strip()
             )
 
-        # Same meaningful missing-value treatment used in the project notebooks.
+        # Remove fully empty rows.
+        model_df = model_df.dropna(how="all")
+
+        # Remove repeated header rows accidentally embedded in the CSV body.
+        repeated_header_mask = pd.Series(True, index=model_df.index)
+        for column in required_columns:
+            repeated_header_mask &= (
+                model_df[column].astype("string").str.strip() == column
+            )
+        model_df = model_df.loc[~repeated_header_mask].copy()
+
+        # Keep only valid target labels.
+        model_df = model_df[
+            model_df["Churn"].isin(["Yes", "No"])
+        ].copy()
+
+        if model_df.empty:
+            raise ValueError(
+                "No valid training rows remain after cleaning. "
+                "The Churn column must contain Yes/No values."
+            )
+
+        # Convert numeric fields safely.
+        numeric_columns = [
+            "Age",
+            "Tenure",
+            "MonthlyCharges",
+            "TotalCharges",
+        ]
+
+        for column in numeric_columns:
+            model_df[column] = pd.to_numeric(
+                model_df[column],
+                errors="coerce",
+            )
+
+        # Missing internet service is treated as its own category.
+        model_df["InternetService"] = model_df["InternetService"].replace(
+            {"<NA>": pd.NA, "nan": pd.NA, "None": pd.NA, "": pd.NA}
+        )
         model_df["InternetService"] = model_df["InternetService"].fillna(
             "No Internet Service"
         )
 
-        numeric_columns = model_df.select_dtypes(include=["number"]).columns
+        # Fill numeric missing values.
         for column in numeric_columns:
-            model_df[column] = model_df[column].fillna(
-                model_df[column].median()
+            median_value = model_df[column].median()
+            if pd.isna(median_value):
+                raise ValueError(
+                    f"Column {column} has no usable numeric values."
+                )
+            model_df[column] = model_df[column].fillna(median_value)
+
+        # Fill categorical missing values.
+        categorical_columns = [
+            "Gender",
+            "ContractType",
+            "InternetService",
+            "TechSupport",
+        ]
+
+        for column in categorical_columns:
+            model_df[column] = model_df[column].replace(
+                {"<NA>": pd.NA, "nan": pd.NA, "None": pd.NA, "": pd.NA}
+            )
+            if model_df[column].isna().any():
+                modes = model_df[column].mode(dropna=True)
+                if modes.empty:
+                    raise ValueError(
+                        f"Column {column} has no usable categorical values."
+                    )
+                model_df[column] = model_df[column].fillna(modes.iloc[0])
+
+        model_df = model_df.drop_duplicates().reset_index(drop=True)
+
+        # Validate class counts before stratified splitting.
+        class_counts = model_df["Churn"].value_counts()
+
+        if len(class_counts) < 2:
+            raise ValueError(
+                "The dataset must contain both Churn='Yes' and Churn='No'. "
+                f"Found: {class_counts.to_dict()}"
             )
 
-        categorical_columns = model_df.select_dtypes(
-            include=["object", "string"]
-        ).columns
-        for column in categorical_columns:
-            if model_df[column].isna().any():
-                model_df[column] = model_df[column].fillna(
-                    model_df[column].mode().iloc[0]
-                )
+        if (class_counts < 2).any():
+            raise ValueError(
+                "Each churn class needs at least 2 valid rows for stratified training. "
+                f"Found: {class_counts.to_dict()}"
+            )
 
-        return model_df.drop_duplicates().reset_index(drop=True)
+        return model_df
 
     @staticmethod
     def _encode(dataframe: pd.DataFrame) -> pd.DataFrame:

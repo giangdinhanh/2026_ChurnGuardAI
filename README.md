@@ -107,3 +107,19 @@ git push origin main
 The app still uses SQLite so the assignment can demonstrate form → database → model → prediction history.
 
 However, the local filesystem on Streamlit Community Cloud is not permanent application storage. Records written after deployment can disappear when the app restarts or redeploys. The prediction feature itself will still work because the model is retrained from the CSV in the repository.
+
+
+## Dataset validation
+
+The model loader now automatically:
+- strips spaces/BOM from column names
+- removes accidental repeated header rows inside the CSV
+- keeps only valid `Churn` values (`Yes` / `No`)
+- converts numeric fields safely
+- checks class counts before stratified splitting
+
+Optional local check:
+
+```bash
+python check_dataset.py
+```

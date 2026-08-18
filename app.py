@@ -188,8 +188,8 @@ def show_model_status():
         st.error("Model is not ready.")
         st.code(model_service.error or "Unknown model-loading error")
         st.info(
-            "Add `customer_churn_data.csv` to the same GitHub folder as `app.py`, "
-            "then commit and redeploy."
+            "The CSV file was found, but the model could not train from its current contents. "
+            "Check the dataset error shown above, then commit the corrected file and reboot/redeploy."
         )
 
 

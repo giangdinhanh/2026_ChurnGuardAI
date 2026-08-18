@@ -153,11 +153,23 @@ init_db()
 
 # ---------- Model ----------
 @st.cache_resource(show_spinner=False)
-def load_model():
-    return ChurnModelService(DATA_PATH)
+def load_model(data_path: str, modified_time_ns: int, file_size: int):
+    """
+    Cache the trained model, but automatically rebuild it whenever the CSV changes.
+    modified_time_ns and file_size are included in the cache key on purpose.
+    """
+    return ChurnModelService(Path(data_path))
 
 
-model_service = load_model()
+if DATA_PATH.exists():
+    _csv_stat = DATA_PATH.stat()
+    model_service = load_model(
+        str(DATA_PATH),
+        _csv_stat.st_mtime_ns,
+        _csv_stat.st_size,
+    )
+else:
+    model_service = ChurnModelService(DATA_PATH)
 
 
 # ---------- Shared helpers ----------
